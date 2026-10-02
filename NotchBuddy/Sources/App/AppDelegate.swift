@@ -68,10 +68,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     /// Centres the window horizontally and keeps its title bar clear of the island panel
-    /// (320 pt tall at the top of the notch screen), shrinking it to fit if needed.
+    /// (320 pt tall at the top of the island's screen), shrinking it to fit if needed.
     private func placeBelowIsland(_ win: NSWindow) {
-        let screen = IslandWindowController.notchScreen() ?? NSScreen.main ?? win.screen
-        guard let screen else { win.center(); return }
+        let screen = IslandDisplay.current()
         let visible = screen.visibleFrame
         let islandBottom = screen.frame.maxY - 320 - 12   // island panel height + margin
         let top = min(visible.maxY, islandBottom)

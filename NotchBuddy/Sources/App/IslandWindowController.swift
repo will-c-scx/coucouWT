@@ -45,7 +45,7 @@ final class IslandWindowController: NSWindowController {
     private var hasNotch = true
 
     convenience init() {
-        let screen = Self.notchScreen() ?? NSScreen.main!
+        let screen = IslandDisplay.current()
         let geometry = Self.screenGeometry(for: screen)
         let nW = geometry.width
         let nH = geometry.height
@@ -137,6 +137,14 @@ final class IslandWindowController: NSWindowController {
         startPolling()
         startKeyMonitor()
         wireFSM()
+
+        // Follow the chosen display: monitors plugged in or out, or a new pick in Settings.
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(moveToChosenScreen),
+            name: NSApplication.didChangeScreenParametersNotification, object: nil)
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(moveToChosenScreen),
+            name: .islandDisplayChanged, object: nil)
 
         // Make panel key whenever the prompt/chat view becomes active
         // (nonactivatingPanel never auto-becomes key, but TextField needs it)
@@ -775,11 +783,31 @@ final class IslandWindowController: NSWindowController {
         return dx*dx + dy*dy <= radius * radius
     }
 
-    // MARK: - Notch detection (static)
+    // MARK: - Display placement
 
-    static func notchScreen() -> NSScreen? {
-        NSScreen.screens.first { $0.safeAreaInsets.top > 0 }
+    /// Moves the panel to the top-centre of the chosen screen and re-measures its notch.
+    /// Falls back to the built-in screen when the saved monitor is gone.
+    @objc private func moveToChosenScreen() {
+        guard let panel = islandPanel else { return }
+        let screen = IslandDisplay.current()
+        let geometry = Self.screenGeometry(for: screen)
+        notchW = geometry.width
+        notchH = geometry.height
+        hasNotch = geometry.hasNotch
+        panel.notchWidth = notchW
+        panel.notchHeight = notchH
+        AppState.shared.notchWidth = notchW
+        AppState.shared.notchHeight = notchH
+        AppState.shared.hasNotch = hasNotch
+
+        let sf = screen.frame
+        let size = panel.frame.size
+        let target = NSRect(x: sf.midX - size.width / 2, y: sf.maxY - size.height,
+                            width: size.width, height: size.height)
+        if panel.frame != target { panel.setFrame(target, display: true) }
     }
+
+    // MARK: - Notch geometry (static)
 
     static func screenGeometry(for screen: NSScreen) -> IslandScreenGeometry {
         let visibleMenuBarHeight = screen.frame.maxY - screen.visibleFrame.maxY

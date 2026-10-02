@@ -27,6 +27,8 @@ struct SettingsView: View {
         fetchedModels.isEmpty ? Self.fallbackModels : fetchedModels
     }
     @State private var launchAtStartup: Bool = (SMAppService.mainApp.status == .enabled)
+    @State private var displayChoice: IslandDisplayChoice = .saved
+    @State private var screens: [(id: CGDirectDisplayID, name: String)] = SettingsView.connectedScreens()
     @State private var statusMessage: String = ""
     @State private var showDiff: Bool = false
     @State private var pendingHookJSON: String = ""
@@ -425,6 +427,32 @@ struct SettingsView: View {
                     .padding(6)
                 }
 
+                // MARK: Display
+                GroupBox("Display") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Picker("Show island on", selection: $displayChoice) {
+                            Text("Built-in display").tag(IslandDisplayChoice.builtIn)
+                            Text("Main display").tag(IslandDisplayChoice.main)
+                            if !screens.isEmpty { Divider() }
+                            ForEach(screens, id: \.id) { screen in
+                                Text(screen.name).tag(IslandDisplayChoice.screen(screen.id))
+                            }
+                            if case .screen(let id) = displayChoice, !screens.contains(where: { $0.id == id }) {
+                                Text("Disconnected display").tag(displayChoice)
+                            }
+                        }
+                        .onChange(of: displayChoice) { _, choice in IslandDisplayChoice.saved = choice }
+                        Text("If the chosen display is unplugged, the island moves to the built-in display.")
+                            .font(.system(size: 11))
+                            .foregroundColor(.secondary)
+                    }
+                    .padding(6)
+                }
+                .onReceive(NotificationCenter.default.publisher(
+                    for: NSApplication.didChangeScreenParametersNotification)) { _ in
+                    screens = Self.connectedScreens()
+                }
+
                 // MARK: Active pills
                 GroupBox("Active pills") {
                     VStack(alignment: .leading, spacing: 10) {
@@ -819,6 +847,14 @@ struct SettingsView: View {
                 .disabled(atMax)
             }
         }
+    }
+}
+
+// MARK: - Display picker
+
+extension SettingsView {
+    static func connectedScreens() -> [(id: CGDirectDisplayID, name: String)] {
+        NSScreen.screens.map { (IslandDisplay.displayID(of: $0), $0.localizedName) }
     }
 }
 
