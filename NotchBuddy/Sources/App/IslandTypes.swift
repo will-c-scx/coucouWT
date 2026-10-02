@@ -36,7 +36,7 @@ struct ApprovalInfo: Sendable {
     var command: String
     /// tool_input serialized to JSON with sortedKeys, "" if absent — used to match PostToolUse.
     var inputKey: String
-    /// Pill that owns this approval: "integration_claude" or "agent_cursor".
+    /// Pill that owns this approval: a worktree pill ("claude_…") or "agent_cursor".
     var pillId: String
 }
 
@@ -59,6 +59,9 @@ struct AgentTask: Identifiable, Equatable {
     var miniEye: EyeShape? = nil
     var pillBadge: PillBadge? = nil  // alert badge shown on pill when not focused
     var sessionCwd: String?  = nil  // last known working directory (Claude Code sessions)
+    var sessionHost: SessionHost? = nil  // app the session runs in (per-worktree pills)
+    var sessionIds: Set<String> = []     // live Claude Code sessions in this worktree pill
+    var lastEventAt: Date? = nil         // last hook event, for idle cleanup
 }
 
 enum AgentSource: Equatable {

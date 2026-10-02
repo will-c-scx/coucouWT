@@ -177,7 +177,9 @@ struct OverviewView: View {
             switchChatProvider(.openai)
         default:
             // Non-integration real tasks
-            if task.source == .n8n {
+            if ClaudeSessionPills.openHost(of: task) {
+                // Worktree pill: its VS Code window or terminal app
+            } else if task.source == .n8n {
                 if let urlStr = KeychainStore.shared.get("n8n-url"), let url = URL(string: urlStr) {
                     NSWorkspace.shared.open(url)
                 }
@@ -325,6 +327,10 @@ struct FinishedView: View {
                 HStack(spacing: 8) {
                     #if !APPSTORE
                     PrimaryButton("Open terminal") {
+                        if let task = state.focusTask, ClaudeSessionPills.openHost(of: task) {
+                            NotificationCenter.default.post(name: .islandCollapse, object: nil)
+                            return
+                        }
                         let terminalBundleIds = ["com.apple.Terminal", "com.googlecode.iterm2", "net.kovidgoyal.kitty", "com.mitchellh.ghostty"]
                         let activated = terminalBundleIds.compactMap { id in
                             NSWorkspace.shared.runningApplications.first { $0.bundleIdentifier == id }
@@ -2515,32 +2521,40 @@ struct AgentPillsView: View {
         state.tasks.filter { $0.id != state.focusId }
     }
 
-    private var displayTasks: [AgentTask] {
-        Array(others.prefix(4))
-    }
-
     private let columns = [
         GridItem(.flexible(), spacing: 4),
         GridItem(.flexible(), spacing: 4)
     ]
 
     var body: some View {
-        VStack(spacing: 0) {
-            Spacer(minLength: 0)
-            LazyVGrid(columns: columns, spacing: 4) {
-                ForEach(displayTasks) { task in
-                    AgentPill(task: task, state: state, swapping: $swapping) {
-                        swapping = true
-                        state.setFocus(task.id)
-                        SoundEngine.shared.play("blip")
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { swapping = false }
-                    }
+        if others.count > 4 {
+            // 5+ pills: same grid, scrolled. Pills needing attention come first.
+            ScrollView(.vertical, showsIndicators: false) {
+                grid(prioritizingAlerts(others)).padding(.vertical, 8)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
+            VStack(spacing: 0) {
+                Spacer(minLength: 0)
+                grid(others)
+                Spacer(minLength: 0)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+
+    private func grid(_ tasks: [AgentTask]) -> some View {
+        LazyVGrid(columns: columns, spacing: 4) {
+            ForEach(tasks) { task in
+                AgentPill(task: task, state: state, swapping: $swapping) {
+                    swapping = true
+                    state.setFocus(task.id)
+                    SoundEngine.shared.play("blip")
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { swapping = false }
                 }
             }
-            .padding(.horizontal, 8)
-            Spacer(minLength: 0)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(.horizontal, 8)
     }
 }
 
@@ -2550,6 +2564,8 @@ struct AgentPill: View {
     @Binding var swapping: Bool
     let onTap: () -> Void
     @State private var isHovered = false
+
+    private var isSessionPill: Bool { ClaudeSessionPills.isSessionPill(task.id) }
 
     // VS Code pill always shows "VS Code" label regardless of active project name
     private var displayName: String {
@@ -2579,8 +2595,12 @@ struct AgentPill: View {
                                          ? Color(hex: task.color).lighter(by: 0.3)
                                          : Color(hex: "#6B7079"))
                         .lineLimit(1)
-                        .truncationMode(.tail)
+                        // Worktree names often share a prefix: keep both ends visible.
+                        .truncationMode(isSessionPill ? .middle : .tail)
                         .frame(maxWidth: .infinity, alignment: .center)
+                        // Worktree pills: keep the name between the mini bot and the edge.
+                        .padding(.leading, isSessionPill ? 32 : 0)
+                        .padding(.trailing, isSessionPill ? 8 : 0)
                 }
                 .frame(maxWidth: .infinity)
                 .frame(height: 28)
@@ -2650,7 +2670,7 @@ struct ColumnAgentsView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            ForEach(Array(others.prefix(4).enumerated()), id: \.1.id) { idx, task in
+            ForEach(Array(prioritizingAlerts(others).prefix(4).enumerated()), id: \.1.id) { idx, task in
                 MiniBotCanvasView(task: task)
                     .frame(width: 16 / 0.6, height: 16 / 0.6)
                     .frame(width: 16, height: 16)
@@ -2659,6 +2679,16 @@ struct ColumnAgentsView: View {
             }
         }
     }
+}
+
+/// With more than four pills only some fit: pills with a badge or waiting on the user go
+/// first, the rest keep their order. Four or fewer are returned unchanged.
+func prioritizingAlerts(_ tasks: [AgentTask]) -> [AgentTask] {
+    guard tasks.count > 4 else { return tasks }
+    func needsUser(_ t: AgentTask) -> Bool {
+        t.pillBadge != nil || t.state == .approval || t.state == .question || t.state == .error
+    }
+    return tasks.filter(needsUser) + tasks.filter { !needsUser($0) }
 }
 
 // MARK: - Card background
