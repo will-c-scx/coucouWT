@@ -67,7 +67,7 @@ struct AgentTask: Identifiable, Equatable {
 enum AgentSource: Equatable {
     case claudeCode
     case n8n
-    case agent   // third-party agent via coucou_agent field
+    case agent   // Claude Code inside another editor (Cursor)
 }
 
 // MARK: - Chat provider
