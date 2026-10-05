@@ -318,7 +318,7 @@ struct FinishedView: View {
                     .fixedSize(horizontal: false, vertical: true)
                 HStack(spacing: 8) {
                     #if !APPSTORE
-                    PrimaryButton("Open terminal") {
+                    PrimaryButton("Open window") {
                         if let task = state.focusTask, ClaudeSessionPills.openHost(of: task) {
                             NotificationCenter.default.post(name: .islandCollapse, object: nil)
                             return
