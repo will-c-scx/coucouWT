@@ -34,18 +34,6 @@ struct SettingsView: View {
     @State private var pendingHookJSON: String = ""
     @State private var hookNeedsUpdate: Bool = HookServer.hooksNeedUpdate()
 
-    #if !APPSTORE
-    @State private var geminiHooksInstalled: Bool = HookServer.geminiHooksInstalled()
-    @State private var showGeminiDiff: Bool = false
-    @State private var pendingGeminiJSON: String = ""
-    @State private var geminiPendingInstall: Bool = true
-
-    @State private var agyHooksInstalled: Bool = HookServer.agyHooksInstalled()
-    @State private var showAgyDiff: Bool = false
-    @State private var pendingAgyJSON: String = ""
-    @State private var agyPendingInstall: Bool = true
-    #endif
-
     // Multi-provider chat keys
     @State private var googleKey: String  = KeychainStore.shared.get("google-api-key") ?? ""
     @State private var openAIKey: String  = KeychainStore.shared.get("openai-api-key") ?? ""
@@ -221,75 +209,6 @@ struct SettingsView: View {
                     }
                     .padding(6)
                 }
-
-                // MARK: Gemini CLI Hooks / Antigravity Hooks
-                #if !APPSTORE
-                GroupBox("Gemini CLI Hooks") {
-                    VStack(alignment: .leading, spacing: 10) {
-                        Text(geminiHooksInstalled
-                             ? "Hooks installed — restart Gemini CLI to activate"
-                             : "~/.gemini/settings.json")
-                            .font(.system(size: 11, design: .monospaced))
-                            .foregroundColor(.secondary)
-                        HStack(spacing: 10) {
-                            Button("Install hooks") { triggerGeminiPreview(install: true) }
-                                .buttonStyle(.borderedProminent)
-                            Button("Uninstall") { triggerGeminiPreview(install: false) }
-                                .buttonStyle(.bordered)
-                        }
-                        if showGeminiDiff {
-                            ScrollView {
-                                Text(pendingGeminiJSON)
-                                    .font(.system(size: 10, design: .monospaced))
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                            }
-                            .frame(height: 140)
-                            .background(Color(NSColor.textBackgroundColor))
-                            .cornerRadius(6)
-                            HStack {
-                                Button("Confirm & write") { confirmGeminiOp() }
-                                    .buttonStyle(.borderedProminent)
-                                Button("Cancel") { showGeminiDiff = false; pendingGeminiJSON = "" }
-                                    .buttonStyle(.bordered)
-                            }
-                        }
-                    }
-                    .padding(6)
-                }
-
-                GroupBox("Antigravity Hooks") {
-                    VStack(alignment: .leading, spacing: 10) {
-                        Text(agyHooksInstalled
-                             ? "Hooks installed — restart Antigravity to activate"
-                             : "~/.gemini/config/hooks.json")
-                            .font(.system(size: 11, design: .monospaced))
-                            .foregroundColor(.secondary)
-                        HStack(spacing: 10) {
-                            Button("Install hooks") { triggerAgyPreview(install: true) }
-                                .buttonStyle(.borderedProminent)
-                            Button("Uninstall") { triggerAgyPreview(install: false) }
-                                .buttonStyle(.bordered)
-                        }
-                        if showAgyDiff {
-                            ScrollView {
-                                Text(pendingAgyJSON)
-                                    .font(.system(size: 10, design: .monospaced))
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                            }
-                            .frame(height: 140)
-                            .background(Color(NSColor.textBackgroundColor))
-                            .cornerRadius(6)
-                            HStack {
-                                Button("Confirm & write") { confirmAgyOp() }
-                                    .buttonStyle(.borderedProminent)
-                                Button("Cancel") { showAgyDiff = false; pendingAgyJSON = "" }
-                                    .buttonStyle(.bordered)
-                            }
-                        }
-                    }
-                    .padding(6)
-                }
-                #endif
 
                 // MARK: Integrations
                 GroupBox("Integrations") {
@@ -654,62 +573,6 @@ struct SettingsView: View {
         }
     }
 
-    #if !APPSTORE
-    private func triggerGeminiPreview(install: Bool) {
-        do {
-            geminiPendingInstall = install
-            pendingGeminiJSON = try HookServer.shared.previewGeminiHooks(install: install)
-            showGeminiDiff = true
-            statusMessage = "Review the JSON below before confirming."
-        } catch let e as NSError where e.domain == "CoucouNoop" {
-            statusMessage = e.localizedDescription
-        } catch {
-            statusMessage = "❌ \(error.localizedDescription)"
-        }
-    }
-
-    private func confirmGeminiOp() {
-        do {
-            try HookServer.shared.writeGeminiHooks()
-            showGeminiDiff = false
-            pendingGeminiJSON = ""
-            geminiHooksInstalled = geminiPendingInstall
-            statusMessage = geminiPendingInstall
-                ? "✓ Gemini CLI hooks installed in ~/.gemini/settings.json"
-                : "✓ Gemini CLI hooks removed."
-        } catch {
-            statusMessage = "❌ \(error.localizedDescription)"
-        }
-    }
-
-    private func triggerAgyPreview(install: Bool) {
-        do {
-            agyPendingInstall = install
-            pendingAgyJSON = try HookServer.shared.previewAgyHooks(install: install)
-            showAgyDiff = true
-            statusMessage = "Review the JSON below before confirming."
-        } catch let e as NSError where e.domain == "CoucouNoop" {
-            statusMessage = e.localizedDescription
-        } catch {
-            statusMessage = "❌ \(error.localizedDescription)"
-        }
-    }
-
-    private func confirmAgyOp() {
-        do {
-            try HookServer.shared.writeAgyHooks()
-            showAgyDiff = false
-            pendingAgyJSON = ""
-            agyHooksInstalled = agyPendingInstall
-            statusMessage = agyPendingInstall
-                ? "✓ Antigravity hooks installed in ~/.gemini/config/hooks.json"
-                : "✓ Antigravity hooks removed."
-        } catch {
-            statusMessage = "❌ \(error.localizedDescription)"
-        }
-    }
-    #endif
-
     private func saveIntegrations() {
         saveKey("resend-api-key",  value: resendKey)
         saveKey("resend-from",     value: resendFrom)
@@ -810,10 +673,6 @@ struct SettingsView: View {
         let hint: String? = {
             if isMain { return nil }
             if def.comingSoon { return "Coming soon" }
-            #if !APPSTORE
-            if def.id == "agent_gemini"        && !HookServer.geminiHooksInstalled() { return "Hooks not installed" }
-            if def.id == "agent_antigravity"   && !HookServer.agyHooksInstalled()    { return "Hooks not installed" }
-            #endif
             if def.category == .ai {
                 let keyId = def.id == "ai_anthropic" ? "anthropic-api-key"
                            : def.id == "ai_google"    ? "google-api-key" : "openai-api-key"

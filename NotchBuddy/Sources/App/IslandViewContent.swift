@@ -152,23 +152,6 @@ struct OverviewView: View {
                 NSWorkspace.shared.openApplication(at: url, configuration: .init(), completionHandler: nil)
             }
             #endif
-        case "agent_codex":
-            #if !APPSTORE
-            if let url = NSWorkspace.shared.urlForApplication(
-                withBundleIdentifier: "com.openai.codex") {
-                NSWorkspace.shared.openApplication(at: url, configuration: .init(), completionHandler: nil)
-            }
-            #endif
-        case "agent_gemini", "agent_antigravity":
-            #if !APPSTORE
-            let terminalBundleIds = ["com.apple.Terminal", "com.googlecode.iterm2",
-                                     "net.kovidgoyal.kitty", "com.mitchellh.ghostty"]
-            if let hit = terminalBundleIds.compactMap({ id in
-                NSWorkspace.shared.runningApplications.first { $0.bundleIdentifier == id }
-            }).first {
-                hit.activate(options: .activateIgnoringOtherApps)
-            }
-            #endif
         case "ai_anthropic":
             switchChatProvider(.anthropic)
         case "ai_google":
@@ -1169,20 +1152,8 @@ struct IntegrationCardView: View {
                 return cmd?.contains("NotchBuddy") == true || cmd?.contains("coucou") == true
             } ?? false }
             #endif
-        case "agent_gemini":
-            #if !APPSTORE
-            return HookServer.geminiHooksInstalled()
-            #else
+        case "agent_cursor":
             return false
-            #endif
-        case "agent_antigravity":
-            #if !APPSTORE
-            return HookServer.agyHooksInstalled()
-            #else
-            return false
-            #endif
-        case "agent_cursor", "agent_codex":
-            return false  // coming soon
         case "ai_anthropic":  return KeychainStore.shared.get("anthropic-api-key") != nil
         case "ai_google":     return KeychainStore.shared.get("google-api-key")    != nil
         case "ai_openai":     return KeychainStore.shared.get("openai-api-key")    != nil
@@ -1216,7 +1187,7 @@ struct IntegrationCardView: View {
     // Workspace/agent pill with active session: show ticker layout
     private var agentSessionActive: Bool {
         guard let def = PillCatalog.definition(for: task.id) else { return false }
-        guard def.category == .workspace || def.category == .agent else { return false }
+        guard def.category == .workspace else { return false }
         return task.state != .idle || !task.steps.isEmpty
     }
 
@@ -1271,10 +1242,8 @@ struct IntegrationCardView: View {
                    : task.id == "integration_calcom"  ? appState.calcomError
                    : nil
         if let err = svcErr { return err }
-        let isHooks = task.id == "agent_gemini" || task.id == "agent_antigravity"
         let isAI    = task.id == "ai_anthropic" || task.id == "ai_google" || task.id == "ai_openai"
         if isConfigured {
-            if isHooks { return "Hooks installed" }
             if isAI {
                 let model = task.id == "ai_anthropic" ? appState.claudeModel
                           : task.id == "ai_google"    ? appState.googleChatModel
@@ -1283,7 +1252,6 @@ struct IntegrationCardView: View {
             }
             return "Connected · loading…"
         } else {
-            if isHooks { return "Hooks not installed" }
             return "Key not configured"
         }
     }
@@ -1402,19 +1370,6 @@ struct IntegrationCardView: View {
                             .buttonStyle(.plain)
                         }
                         #endif
-                    } else if task.id == "agent_codex" {
-                        #if !APPSTORE
-                        if let url = NSWorkspace.shared.urlForApplication(
-                            withBundleIdentifier: "com.openai.codex") {
-                            Button("Open Codex") {
-                                NSWorkspace.shared.openApplication(at: url, configuration: .init(),
-                                                                   completionHandler: nil)
-                            }
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundColor(Color(hex: task.color).opacity(0.85))
-                            .buttonStyle(.plain)
-                        }
-                        #endif
                     } else if task.id == "ai_anthropic" || task.id == "ai_google" || task.id == "ai_openai" {
                         if isConfigured {
                             let provider: ChatProvider = task.id == "ai_anthropic" ? .anthropic
@@ -1467,10 +1422,8 @@ struct IntegrationCardView: View {
                             .foregroundColor(Color(hex: "#C9956A").opacity(0.85))
                             .buttonStyle(.plain)
                     }
-                    // Settings button: shown when not configured, except cursor/codex (coming soon)
-                    if !isConfigured
-                       && task.id != "agent_cursor"
-                       && task.id != "agent_codex" {
+                    // Settings button: shown when not configured, except Cursor (nothing to set up)
+                    if !isConfigured && task.id != "agent_cursor" {
                         Button("Settings…") {
                             NotificationCenter.default.post(name: .openFullSettings, object: nil)
                         }
