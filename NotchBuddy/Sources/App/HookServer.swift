@@ -319,10 +319,11 @@ final class HookServer: @unchecked Sendable {
             } else if type == "idle_prompt" {
                 updateActivity(id: agentId) { $0.waitingForYou() }
             } else if type == "permission_prompt" {
-                // The PermissionRequest hook already set the line when it carries the tool.
-                if state.tasks.first(where: { $0.id == agentId })?.activity.line.hasPrefix("Needs approval") != true {
+                // The PermissionRequest hook already set the line (or a question is showing).
+                let current = state.tasks.first(where: { $0.id == agentId })?.activity
+                if current?.asking != true, current?.line.hasPrefix("Needs approval") != true {
                     let tool = message.range(of: #"(?<=use )\S+"#, options: .regularExpression)
-                        .map { String(message[$0]) } ?? "tool"
+                        .map { String(message[$0]) } ?? ""
                     updateActivity(id: agentId) { $0.needsApproval(tool: tool) }
                 }
             } else if ["agent_needs_input", "elicitation_dialog", "elicitation_url_dialog"].contains(type)

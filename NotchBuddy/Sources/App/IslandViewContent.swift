@@ -2315,7 +2315,7 @@ struct SessionTickerView: View {
             // Bottom row: what is happening now — a new line slides up, a merged update doesn't
             ZStack(alignment: .leading) {
                 SessionLineRow(text: activity.displayLine.isEmpty ? "…" : activity.displayLine,
-                               busy: activity.busy)
+                               busy: activity.busy, asking: activity.asking)
                     .id(activity.lineID)
                     .transition(.asymmetric(insertion: .offset(y: 22).combined(with: .opacity),
                                             removal: .offset(y: -22).combined(with: .opacity)))
@@ -2331,10 +2331,16 @@ struct SessionTickerView: View {
 struct SessionLineRow: View {
     let text: String
     let busy: Bool   // shimmer while Claude works; plain text when done or waiting on you
+    var asking: Bool = false   // the line is a question Claude asked
+
+    private var icon: String {
+        if asking { return "questionmark" }
+        return text.hasPrefix("Done") ? "checkmark" : "chevron.right"
+    }
 
     var body: some View {
         HStack(spacing: 6) {
-            Image(systemName: text.hasPrefix("Done") ? "checkmark" : "chevron.right")
+            Image(systemName: icon)
                 .font(.system(size: 9, weight: .medium))
                 .foregroundColor(Color(hex: "#8E939C"))
                 .frame(width: 12, alignment: .center)

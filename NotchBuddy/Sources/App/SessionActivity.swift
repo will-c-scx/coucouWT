@@ -20,6 +20,8 @@ struct SessionActivity: Equatable {
     var lineID: Int = 0
     /// True while Claude is working (shimmer); false when done or waiting on you.
     var busy: Bool = false
+    /// True while the line is a question Claude asked you.
+    var asking: Bool = false
     var turnStart: Date? = nil
     var turnEnd: Date? = nil
     var plan: [PlanStep] = []
@@ -84,11 +86,13 @@ struct SessionActivity: Equatable {
 
     mutating func needsApproval(tool: String) {
         if busy { lineBeforeApproval = line }
-        setLine("Needs approval · \(Self.toolName(tool))", busy: false)
+        setLine(tool.isEmpty ? "Needs approval" : "Needs approval · \(Self.toolName(tool))", busy: false)
     }
 
+    /// Claude is asking you something: the line is the question itself (shown with a "?" icon).
     mutating func question(_ text: String) {
-        setLine(text.isEmpty ? "Question" : "Question · \(text)", busy: false)
+        setLine(text.isEmpty ? "Question" : text, busy: false)
+        asking = true
     }
 
     /// AskUserQuestion: the first question itself, with how many more follow.
@@ -159,6 +163,7 @@ struct SessionActivity: Equatable {
         if text != line { lineID &+= 1 }
         line = text
         self.busy = busy
+        asking = false
         mergeKey = nil
         mergeCount = 0
     }
