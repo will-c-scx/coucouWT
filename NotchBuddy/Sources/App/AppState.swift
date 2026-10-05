@@ -311,6 +311,7 @@ final class AppState: ObservableObject {
                 let catalogName = PillCatalog.definition(for: id)?.name
                 tasks[idx].state      = .idle
                 tasks[idx].steps      = []
+                tasks[idx].activity   = SessionActivity()
                 tasks[idx].stepIndex  = 0
                 tasks[idx].pillBadge  = nil
                 if let n = catalogName { tasks[idx].name = n }
