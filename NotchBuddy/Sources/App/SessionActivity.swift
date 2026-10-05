@@ -91,6 +91,15 @@ struct SessionActivity: Equatable {
         setLine(text.isEmpty ? "Question" : "Question · \(text)", busy: false)
     }
 
+    /// AskUserQuestion: the first question itself, with how many more follow.
+    mutating func askUser(_ input: [String: Any]) {
+        let questions = input["questions"] as? [[String: Any]] ?? []
+        let first = questions.first
+        let text = (first?["question"] as? String) ?? (first?["header"] as? String) ?? ""
+        let more = questions.count > 1 ? " (+\(questions.count - 1) more)" : ""
+        question(Self.collapseWhitespace(text) + more)
+    }
+
     /// Claude is idle at the prompt. A finished turn keeps its "Done" line.
     mutating func waitingForYou() {
         guard !line.hasPrefix("Done") else { return }
@@ -119,9 +128,7 @@ struct SessionActivity: Equatable {
             if tool == "TaskUpdate" { updatePlan(input) }
             return   // plan bookkeeping: the counter moves, the line stays
         case "AskUserQuestion":
-            let questions = input["questions"] as? [[String: Any]]
-            let first = questions?.first
-            question((first?["header"] as? String) ?? (first?["question"] as? String) ?? "")
+            askUser(input)
             return
         default:
             break

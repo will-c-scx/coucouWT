@@ -440,6 +440,17 @@ final class HookServer: @unchecked Sendable {
         let inputKey = Self.approvalInputKey(toolInput)
         nbLog("PermissionRequest \(tool) [\(pillId)]")
 
+        // Claude's questions are answered in Claude Code's own picker, not with Allow / Deny:
+        // reply with no decision so Claude Code shows it, and put the question on the pill.
+        if tool == "AskUserQuestion" {
+            Task.detached { [weak self] in
+                self?.sendLine(fd: fd, text: #"{"permissionDecision":"ask"}"#)
+                close(fd)
+            }
+            showQuestion(pillId: pillId, input: toolInput)
+            return
+        }
+
         if pendingApprovalFD >= 0 {
             // Displace the previous request: write "ask" then cancel its source.
             // The cancel handler closes the old fd — never close it directly.
@@ -585,6 +596,25 @@ final class HookServer: @unchecked Sendable {
         let state = AppState.shared
         guard let idx = state.tasks.firstIndex(where: { $0.id == id }) else { return }
         state.tasks[idx].pillBadge = nil
+    }
+
+    // MARK: - Questions
+
+    /// Shows Claude's question in the ticker and opens the island on that pill.
+    @MainActor
+    private func showQuestion(pillId: String, input: [String: Any]) {
+        let state = AppState.shared
+        cancelThinking(id: pillId)
+        state.updateTask(id: pillId, state: .question)
+        updateActivity(id: pillId) { $0.askUser(input) }
+        SoundEngine.shared.play("question")
+        guard state.pendingApproval == nil else { return }   // an approval card keeps the island
+        if state.mode == .expanded {
+            if state.view == .overview { state.focusId = pillId }
+        } else {
+            state.focusId = pillId
+            NotificationCenter.default.post(name: .hookExpand, object: IslandView.overview)
+        }
     }
 
     // MARK: - Ticker activity
