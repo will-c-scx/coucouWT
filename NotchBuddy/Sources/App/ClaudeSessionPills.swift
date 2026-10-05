@@ -137,9 +137,13 @@ enum ClaudeSessionPills {
         let ids = host.isVSCode
             ? host.candidateBundleIds + ["com.microsoft.VSCode", "com.microsoft.VSCodeInsiders", "com.vscodium.codium"]
             : host.candidateBundleIds
-        if host.isVSCode, let cwd = task.sessionCwd, !cwd.isEmpty,
+        if host.isVSCode, let root = task.sessionCwd, !root.isEmpty,
            let appURL = ids.lazy.compactMap({ NSWorkspace.shared.urlForApplication(withBundleIdentifier: $0) }).first {
-            NSWorkspace.shared.open([URL(fileURLWithPath: cwd)], withApplicationAt: appURL,
+            // VS Code reuses a window only for the exact folder or workspace file it has open,
+            // so prefer the worktree's .code-workspace when there is one.
+            let target = workspaceFiles(worktree: root).first { FileManager.default.fileExists(atPath: $0.path) }
+                ?? URL(fileURLWithPath: root)
+            NSWorkspace.shared.open([target], withApplicationAt: appURL,
                                     configuration: .init(), completionHandler: nil)
             return true
         }
@@ -216,17 +220,25 @@ enum ClaudeSessionPills {
         return URL(fileURLWithPath: cwd).standardizedFileURL.path
     }
 
+    /// The worktree's `.code-workspace` files: `<root>/<name>.code-workspace` first, then any
+    /// other at the root. The first may not exist.
+    private static func workspaceFiles(worktree root: String) -> [URL] {
+        let rootURL = URL(fileURLWithPath: root)
+        let named = rootURL.appendingPathComponent(rootURL.lastPathComponent + ".code-workspace")
+        let others = ((try? FileManager.default.contentsOfDirectory(atPath: root)) ?? [])
+            .filter { $0.hasSuffix(".code-workspace") }.sorted()
+            .map { rootURL.appendingPathComponent($0) }
+            .filter { $0.lastPathComponent != named.lastPathComponent }
+        return [named] + others
+    }
+
     /// The worktree's Peacock color, so the pill matches its VS Code window. Looks in
     /// `<root>/<name>.code-workspace`, any other `.code-workspace` at the root, then
     /// `.vscode/settings.json`. Matched with a regex because these files are JSONC.
     private static func peacockColor(worktree root: String) -> String? {
         guard !root.isEmpty else { return nil }
-        let rootURL = URL(fileURLWithPath: root)
-        var files = [rootURL.appendingPathComponent(rootURL.lastPathComponent + ".code-workspace")]
-        let others = (try? FileManager.default.contentsOfDirectory(atPath: root)) ?? []
-        files += others.filter { $0.hasSuffix(".code-workspace") }.sorted()
-            .map { rootURL.appendingPathComponent($0) }
-        files.append(rootURL.appendingPathComponent(".vscode/settings.json"))
+        let files = workspaceFiles(worktree: root)
+            + [URL(fileURLWithPath: root).appendingPathComponent(".vscode/settings.json")]
 
         let pattern = ##""peacock\.color"\s*:\s*"#?([0-9A-Fa-f]{6})""##
         guard let regex = try? NSRegularExpression(pattern: pattern) else { return nil }
