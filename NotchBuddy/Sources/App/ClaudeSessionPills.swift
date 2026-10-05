@@ -6,6 +6,9 @@ struct SessionHost: Equatable {
     let bundleId: String
     /// `TERM_PROGRAM` of the shell, may be empty.
     let termProgram: String
+    /// tmux pane the session runs in (`TMUX_PANE`, e.g. "%3") and its server socket; empty outside tmux.
+    var tmuxPane: String = ""
+    var tmuxSocket: String = ""
 
     var isVSCode: Bool {
         termProgram.lowercased().contains("vscode") || bundleId.lowercased().contains("vscode")
@@ -134,6 +137,9 @@ enum ClaudeSessionPills {
     @discardableResult
     static func openHost(of task: AgentTask) -> Bool {
         guard let host = task.sessionHost else { return false }
+        #if !APPSTORE
+        focusTmuxPane(of: host)
+        #endif
         let ids = host.isVSCode
             ? host.candidateBundleIds + ["com.microsoft.VSCode", "com.microsoft.VSCodeInsiders", "com.vscodium.codium"]
             : host.candidateBundleIds
@@ -155,6 +161,51 @@ enum ClaudeSessionPills {
         }
         return false
     }
+
+    // MARK: - tmux
+
+    #if !APPSTORE
+    /// Brings the session's tmux window and pane forward, so activating the terminal app
+    /// lands on the agent instead of whatever tmux showed last. Uses the client already on
+    /// that session, else switches the most recently active client to it.
+    private static func focusTmuxPane(of host: SessionHost) {
+        guard !host.tmuxPane.isEmpty, let tmux = tmuxPath else { return }
+        let server = host.tmuxSocket.isEmpty ? [] : ["-S", host.tmuxSocket]
+        let pane = host.tmuxPane
+        guard let session = runTmux(tmux, server + ["display-message", "-p", "-t", pane, "#{session_name}"]),
+              !session.isEmpty else { return }   // pane gone (session closed)
+
+        let clients = (runTmux(tmux, server + ["list-clients", "-F",
+                                               "#{client_activity}\t#{client_name}\t#{client_session}"]) ?? "")
+            .split(separator: "\n").map { $0.split(separator: "\t", omittingEmptySubsequences: false).map(String.init) }
+            .filter { $0.count == 3 }
+        var commands = ["select-window", "-t", pane, ";", "select-pane", "-t", pane]
+        if !clients.contains(where: { $0[2] == session }),
+           let recent = clients.max(by: { (Int($0[0]) ?? 0) < (Int($1[0]) ?? 0) }) {
+            commands = ["switch-client", "-c", recent[1], "-t", pane, ";"] + commands
+        }
+        _ = runTmux(tmux, server + commands)
+    }
+
+    private static let tmuxPath: String? = [
+        "/opt/homebrew/bin/tmux", "/usr/local/bin/tmux", "/usr/bin/tmux", "/run/current-system/sw/bin/tmux",
+    ].first { FileManager.default.isExecutableFile(atPath: $0) }
+
+    /// Runs tmux and returns trimmed stdout, nil on failure. tmux answers in milliseconds.
+    private static func runTmux(_ tmux: String, _ args: [String]) -> String? {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: tmux)
+        process.arguments = args
+        let out = Pipe()
+        process.standardOutput = out
+        process.standardError = FileHandle.nullDevice
+        do { try process.run() } catch { return nil }
+        let data = out.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        guard process.terminationStatus == 0 else { return nil }
+        return String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+    #endif
 
     // MARK: - Private
 

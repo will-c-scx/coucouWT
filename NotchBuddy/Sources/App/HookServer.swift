@@ -232,7 +232,7 @@ final class HookServer: @unchecked Sendable {
         } else {
             agentId = ClaudeSessionPills.upsert(
                 sessionId: sessionId, cwd: cwd,
-                host: SessionHost(bundleId: bundleId, termProgram: termProgram),
+                host: Self.sessionHost(payload, bundleId: bundleId, termProgram: termProgram),
                 name: aliasProjectName)
         }
         let focused = state.focusId == agentId
@@ -359,6 +359,12 @@ final class HookServer: @unchecked Sendable {
 
     // MARK: - Helpers
 
+    private static func sessionHost(_ payload: [String: Any], bundleId: String, termProgram: String) -> SessionHost {
+        SessionHost(bundleId: bundleId, termProgram: termProgram,
+                    tmuxPane: payload["tmux_pane"] as? String ?? "",
+                    tmuxSocket: payload["tmux_socket"] as? String ?? "")
+    }
+
     @MainActor
     private func expandIfNeeded(to view: IslandView) {
         let state = AppState.shared
@@ -402,7 +408,7 @@ final class HookServer: @unchecked Sendable {
         let pillId = isCursorEditor
             ? "agent_cursor"
             : ClaudeSessionPills.upsert(sessionId: sessionId, cwd: cwd,
-                                        host: SessionHost(bundleId: bundleId, termProgram: termProgram),
+                                        host: Self.sessionHost(payload, bundleId: bundleId, termProgram: termProgram),
                                         name: aliasProjectName)
 
         let tool = payload["tool_name"] as? String ?? "Tool"
@@ -895,6 +901,8 @@ def main():
     payload.setdefault('term_program', env.get('TERM_PROGRAM', ''))
     payload.setdefault('iterm_session_id', env.get('ITERM_SESSION_ID', ''))
     payload.setdefault('term_session_id', env.get('TERM_SESSION_ID', ''))
+    payload.setdefault('tmux_pane', env.get('TMUX_PANE', ''))
+    payload.setdefault('tmux_socket', env.get('TMUX', '').split(',')[0])
     payload.setdefault('bundle_id', env.get('__CFBundleIdentifier', ''))
     if not payload.get('cwd'):
         payload['cwd'] = os.getcwd()
@@ -987,6 +995,8 @@ def main():
     payload.setdefault('term_program', env.get('TERM_PROGRAM', ''))
     payload.setdefault('iterm_session_id', env.get('ITERM_SESSION_ID', ''))
     payload.setdefault('term_session_id', env.get('TERM_SESSION_ID', ''))
+    payload.setdefault('tmux_pane', env.get('TMUX_PANE', ''))
+    payload.setdefault('tmux_socket', env.get('TMUX', '').split(',')[0])
     payload.setdefault('bundle_id', env.get('__CFBundleIdentifier', ''))
     if not payload.get('cwd'):
         payload['cwd'] = os.getcwd()
