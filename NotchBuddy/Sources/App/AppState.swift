@@ -13,7 +13,10 @@ final class AppState: ObservableObject {
 
     // Tasks
     @Published var tasks: [AgentTask] = []
-    @Published var focusId: String? = nil
+    @Published var focusId: String? = nil {
+        // The VS Code pill is hidden while worktree pills exist: focus one of those instead.
+        didSet { if let id = ClaudeSessionPills.focusReplacing(focusId, in: tasks) { focusId = id } }
+    }
 
     // Bot state override
     @Published var stateOverride: BotState? = nil

@@ -47,10 +47,10 @@ struct SessionHost: Equatable {
 }
 
 /// One pill per worktree for Claude Code sessions running in VS Code or a terminal.
-/// `integration_claude` stays as the summary pill: it mirrors the most urgent session.
+/// The `integration_claude` (VS Code) pill is hidden while any of them exists.
 @MainActor
 enum ClaudeSessionPills {
-    static let summaryId = "integration_claude"
+    static let vsCodePillId = "integration_claude"
     static let idPrefix  = "claude_"
 
     /// Idle pills are removed after this long without an event; busy ones after `staleTimeout`
@@ -107,28 +107,26 @@ enum ClaudeSessionPills {
     static func remove(_ id: String) {
         cleanupTimers.removeValue(forKey: id)?.cancel()
         AppState.shared.removeTask(id: id)
-        refreshSummary()
     }
 
-    /// Mirrors the most urgent session on the summary pill.
-    static func refreshSummary() {
-        let state = AppState.shared
-        guard let idx = state.tasks.firstIndex(where: { $0.id == summaryId }) else { return }
-        let sessions = state.tasks.filter { isSessionPill($0.id) }
-        guard let top = sessions.max(by: { urgency($0.state) < urgency($1.state) }) else {
-            if state.tasks[idx].state != .idle || !state.tasks[idx].steps.isEmpty {
-                state.removeTask(id: summaryId)   // resets the main pill to idle
-            }
-            return
-        }
-        state.tasks[idx].state = top.state
-        state.tasks[idx].name = sessions.count == 1 ? top.name : "\(sessions.count) sessions"
-        state.tasks[idx].steps = sessions.map { "\($0.name) · \($0.steps.last ?? $0.state.rawValue)" }
-        state.tasks[idx].stepIndex = sessions.firstIndex(where: { $0.id == top.id }) ?? 0
-        if let vscode = sessions.filter({ $0.sessionHost?.isVSCode == true })
-            .max(by: { ($0.lastEventAt ?? .distantPast) < ($1.lastEventAt ?? .distantPast) }) {
-            state.tasks[idx].sessionCwd = vscode.sessionCwd
-        }
+    /// The VS Code pill stands in for Claude Code only while no worktree pill exists.
+    /// Removes it from a pill list whenever worktree pills are showing.
+    static func hidingVSCodePill(_ tasks: [AgentTask]) -> [AgentTask] {
+        guard tasks.contains(where: { isSessionPill($0.id) }) else { return tasks }
+        return tasks.filter { $0.id != vsCodePillId }
+    }
+
+    /// Focus to use instead of `id` when it points at the hidden VS Code pill:
+    /// the worktree that most needs attention, else the most recently active. Nil to keep `id`.
+    /// Takes `tasks` rather than reading `AppState.shared`: it runs from AppState's own
+    /// property observer, including while `shared` is still being created.
+    static func focusReplacing(_ id: String?, in tasks: [AgentTask]) -> String? {
+        guard id == vsCodePillId else { return nil }
+        let sessions = tasks.filter { isSessionPill($0.id) }
+        return sessions.max { a, b in
+            if urgency(a.state) != urgency(b.state) { return urgency(a.state) < urgency(b.state) }
+            return (a.lastEventAt ?? .distantPast) < (b.lastEventAt ?? .distantPast)
+        }?.id
     }
 
     /// Brings the session's window forward: VS Code opens the worktree folder (which focuses
@@ -170,14 +168,15 @@ enum ClaudeSessionPills {
         }
     }
 
-    /// Inserts right after the summary pill so sessions sit together.
+    /// Inserts after the other worktree pills (or the VS Code pill) so sessions sit together.
     private static func insert(_ task: AgentTask) {
         let state = AppState.shared
         let anchor = state.tasks.lastIndex(where: { isSessionPill($0.id) })
-            ?? state.tasks.firstIndex(where: { $0.id == summaryId })
+            ?? state.tasks.firstIndex(where: { $0.id == vsCodePillId })
             ?? state.tasks.firstIndex(where: { $0.id == state.mainPillId })
         if let anchor { state.tasks.insert(task, at: anchor + 1) } else { state.tasks.append(task) }
-        if state.focusId == nil { state.focusId = task.id }
+        // The VS Code pill hides once a worktree pill exists, so move focus off it.
+        if state.focusId == nil || state.focusId == vsCodePillId { state.focusId = task.id }
         state.syncMode()
     }
 

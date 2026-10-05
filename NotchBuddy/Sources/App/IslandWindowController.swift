@@ -366,6 +366,12 @@ final class IslandWindowController: NSWindowController {
         window?.resignKey()
     }
 
+    /// Folds the expanded island when the user moves on to another app.
+    private func collapseOnClickAway() {
+        guard state.mode == .expanded, !inAttachDrag, attachDragStart == nil, !wasInIsland else { return }
+        collapse()
+    }
+
     // MARK: - Keyboard (Escape closes)
 
     private func startKeyMonitor() {
@@ -493,6 +499,12 @@ final class IslandWindowController: NSWindowController {
             }
         }
 
+        // Click away closes: a click in another app (global monitors never see our own
+        // windows) folds the open island. A pending approval stays — collapse() refuses.
+        NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
+            Task { @MainActor in self?.collapseOnClickAway() }
+        }
+
         // Track last external app for window context capture
         let ourBundle = Bundle.main.bundleIdentifier ?? ""
         NSWorkspace.shared.notificationCenter.addObserver(
@@ -503,6 +515,8 @@ final class IslandWindowController: NSWindowController {
             if let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
                app.bundleIdentifier != ourBundle {
                 self.state.lastExternalApp = app
+                // Switching to another app (⌘-Tab, Dock…) also closes the island.
+                MainActor.assumeIsolated { self.collapseOnClickAway() }
             }
         }
     }

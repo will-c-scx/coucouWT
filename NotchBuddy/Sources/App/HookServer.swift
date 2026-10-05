@@ -67,7 +67,6 @@ final class HookServer: @unchecked Sendable {
         state.isPinned = false
         state.updateTask(id: pillId, state: .working)
         clearPillBadge(id: pillId)
-        ClaudeSessionPills.refreshSummary()
         // Restore focus to the pill that was focused before the approval card appeared.
         if let prev = focusBeforeApproval {
             focusBeforeApproval = nil
@@ -203,7 +202,7 @@ final class HookServer: @unchecked Sendable {
 
     // MARK: - Event → AppState
     // Claude Code events (VS Code or any terminal) route to one pill per worktree;
-    // "integration_claude" summarises them.
+    // the "integration_claude" pill is hidden while any worktree pill exists.
     // Events tagged with a valid coucou_agent route to a dynamic "integration_<agent>" task.
     // View switches only happen if VS Code (or the agent pill) is currently focused.
     // When not focused: state updates animate the mini bot in the pill; badge shown for alerts.
@@ -231,7 +230,7 @@ final class HookServer: @unchecked Sendable {
         let isCursorEditor = bundleId.lowercased() == "com.todesktop.230313mzl4w4u92"
 
         // Routing: coucou_agent → external pill; Cursor → agent_cursor;
-        // VS Code and terminals → one pill per worktree, summarised on integration_claude.
+        // VS Code and terminals → one pill per worktree.
         let agentId: String
         let isExternalAgent: Bool
         let isSessionPill: Bool
@@ -256,12 +255,7 @@ final class HookServer: @unchecked Sendable {
                     name: aliasProjectName)
             }
         }
-        defer { if isSessionPill { ClaudeSessionPills.refreshSummary() } }
-
-        // Alerts open the card when this pill is focused, or when the summary pill is
-        // (it follows every session) — focus then moves to the session that raised it.
-        let followsSummary = isSessionPill && state.focusId == ClaudeSessionPills.summaryId
-        let focused = state.focusId == agentId || followsSummary
+        let focused = state.focusId == agentId
         let upsert = {
             if isExternalAgent { self.upsertExternalAgent(id: agentId, name: validAgent!) }
             else if !isSessionPill { self.upsertWorkspaceTask(id: agentId, projectName: projectName, cwd: cwd) }
@@ -347,7 +341,6 @@ final class HookServer: @unchecked Sendable {
             }
             SoundEngine.shared.play("finish")
             if focused {
-                if followsSummary { state.focusId = agentId }
                 expandIfNeeded(to: .finished)
             } else {
                 setPillBadge(id: agentId, badge: .finished)
@@ -358,7 +351,6 @@ final class HookServer: @unchecked Sendable {
                 } else {
                     AppState.shared.updateTask(id: agentId, state: .idle)
                     self.clearPillBadge(id: agentId)
-                    if isSessionPill { ClaudeSessionPills.refreshSummary() }
                 }
             }
 
@@ -366,7 +358,6 @@ final class HookServer: @unchecked Sendable {
             state.updateTask(id: agentId, state: .error)
             SoundEngine.shared.play("error")
             if focused {
-                if followsSummary { state.focusId = agentId }
                 expandIfNeeded(to: .error)
             } else {
                 setPillBadge(id: agentId, badge: .error)
@@ -512,7 +503,6 @@ final class HookServer: @unchecked Sendable {
 
         if isCursorEditor { upsertWorkspaceTask(id: pillId, projectName: projectName, cwd: cwd) }
         state.updateTask(id: pillId, state: .approval)
-        ClaudeSessionPills.refreshSummary()
         state.pendingApproval = ApprovalInfo(sessionId: sessionId, tool: tool,
                                               command: command, inputKey: inputKey, pillId: pillId)
         state.isPinned = true
@@ -581,7 +571,6 @@ final class HookServer: @unchecked Sendable {
         state.isPinned = false
         state.updateTask(id: pillId, state: .working)
         clearPillBadge(id: pillId)
-        ClaudeSessionPills.refreshSummary()
         // Restore focus to the pill that was focused before the approval card appeared.
         if let prev = focusBeforeApproval {
             focusBeforeApproval = nil

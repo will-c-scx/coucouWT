@@ -27,10 +27,12 @@ struct BotCanvasView: View {
                     if engine.morph < 0.05 { engine.slotH = 0; engine.slotHVel = 0 }
                 }
                 // Integration pills have a fixed brand color → use it as bodyColor.
-                // Claude Code tasks use state-based gradient (working=blue, thinking=purple, etc.).
-                engine.bodyColor = (state.focusTask?.isIntegration == true)
-                    ? cgColorFromHex(state.focusTask!.color)
-                    : nil
+                // Worktree pills keep their worktree color, like their mini bot.
+                // Other Claude Code tasks use state-based gradient (working=blue, thinking=purple, etc.).
+                let focus = state.focusTask
+                let fixedColor = focus?.isIntegration == true
+                    || focus.map { ClaudeSessionPills.isSessionPill($0.id) } == true
+                engine.bodyColor = fixedColor ? cgColorFromHex(focus!.color) : nil
                 engine.update(dt: dt)
                 engine.drawHandsBehind(context: context, size: size)
                 engine.draw(context: context, size: size)
@@ -140,6 +142,7 @@ struct MiniBotCanvasView: View {
                 engine.update(dt: dt)
                 engine.draw(context: context, size: size)
             }
+            .opacity(pulseOpacity(at: timeline.date.timeIntervalSinceReferenceDate))
         }
         .onChange(of: task.state) { _, newState in
             engine.setState(newState)
@@ -155,6 +158,21 @@ struct MiniBotCanvasView: View {
                 engine.eyeOverride = eye
                 engine.eyeOverrideUntil = .greatestFiniteMagnitude
             }
+        }
+    }
+}
+
+extension MiniBotCanvasView {
+    /// Worktree pills fade gently in and out while their session works, and stay solid
+    /// once it is done or waiting on the user.
+    private func pulseOpacity(at t: TimeInterval) -> Double {
+        guard ClaudeSessionPills.isSessionPill(task.id) else { return 1 }
+        switch task.state {
+        case .working, .thinking, .searching:
+            let period = 1.6
+            return 0.35 + 0.65 * (0.5 + 0.5 * cos(2 * .pi * t / period))
+        default:
+            return 1
         }
     }
 }

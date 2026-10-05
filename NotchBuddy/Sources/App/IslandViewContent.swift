@@ -2518,7 +2518,7 @@ struct AgentPillsView: View {
     @State private var swapping = false
 
     private var others: [AgentTask] {
-        state.tasks.filter { $0.id != state.focusId }
+        ClaudeSessionPills.hidingVSCodePill(state.tasks).filter { $0.id != state.focusId }
     }
 
     private let columns = [
@@ -2665,7 +2665,7 @@ struct ColumnAgentsView: View {
     @ObservedObject var state: AppState
 
     var others: [AgentTask] {
-        state.tasks.filter { $0.id != state.focusId }
+        ClaudeSessionPills.hidingVSCodePill(state.tasks).filter { $0.id != state.focusId }
     }
 
     var body: some View {
