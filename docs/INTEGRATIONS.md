@@ -25,14 +25,14 @@ claude (terminal, VS Code, app Claude)
 | Hook | Effet dans l'app |
 |---|---|
 | `SessionStart` | crée la tâche (nom = dossier), état `idle` |
-| `UserPromptSubmit` | état `thinking`, ligne du défilé = début du prompt |
-| `PreToolUse` | état `working`, ligne = outil + cible (« Edit Invoice.swift », « Bash npm test ») |
-| `PostToolUse` / `PostToolUseFailure` | met à jour la ligne ; un échec reste `working` |
+| `UserPromptSubmit` | état `thinking`, ligne du haut = le prompt (`prompt`), ligne du bas = « Thinking… », chrono remis à zéro |
+| `PreToolUse` | état `working`, ligne du bas = action (« Editing Invoice.swift », description de la commande Bash) ; `TaskCreate` / `TaskUpdate` font avancer « Step x/y » |
+| `PostToolUse` / `PostToolUseFailure` | un échec affiche « <outil> failed » ; sans nouvel outil après 1,5 s → « Thinking… » |
 | `PermissionRequest` | alerte `approval` (voir plus bas) |
-| `Notification` | selon le type : attente d'entrée → `question` si une question est posée, sinon rien ; limite d'usage → `ratelimit` |
-| `Stop` | état `finished` → vue `finished` 5,2 s, résumé = dernière phrase utile de la réponse si disponible |
-| `StopFailure` (si présent dans la doc) | alerte `error` |
-| `SubagentStart` / `SubagentStop` | afficher « + sous-agent » dans le défilé |
+| `Notification` | selon `notification_type` : `idle_prompt` → « Waiting for you » ; `permission_prompt` → « Needs approval » ; `agent_needs_input` / `elicitation_*` → `question` ; limite d'usage → `ratelimit` |
+| `Stop` | état `finished` → vue `finished` 5,2 s, résumé = première phrase de `last_assistant_message` |
+| `StopFailure` | alerte `error`, « Stopped · <error_type> » |
+| `SubagentStart` / `SubagentStop` | compte des sous-agents : « 2 agents · <action> » |
 | `SessionEnd` | retire la tâche |
 
 Vérifier dans la doc la liste exacte des événements et leurs champs.

@@ -9,11 +9,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Ignore SIGPIPE — prevents crash when nb-hook closes socket before we write response
         signal(SIGPIPE, SIG_IGN)
+        quitOtherInstances()
         // Warm up Keychain cache on main thread BEFORE any poller or view touches it
         _ = KeychainStore.shared
         NSApp.setActivationPolicy(.accessory)
         setupMenuBarItem()
         setupIsland()
+    }
+
+    // MARK: - Single instance
+
+    /// Only one Coucou may run: several would stack islands in the notch and race for
+    /// the hook socket. The newest launch wins (a fresh Xcode run replaces the old one).
+    private func quitOtherInstances() {
+        guard let bundleId = Bundle.main.bundleIdentifier else { return }
+        let me = ProcessInfo.processInfo.processIdentifier
+        let others = NSRunningApplication.runningApplications(withBundleIdentifier: bundleId)
+            .filter { $0.processIdentifier != me }
+        guard !others.isEmpty else { return }
+        others.forEach { $0.terminate() }
+        // Force the ones that ignore a polite quit (hung, or paused in a debugger).
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+            others.filter { !$0.isTerminated }.forEach { $0.forceTerminate() }
+        }
     }
 
     // MARK: - Menu bar

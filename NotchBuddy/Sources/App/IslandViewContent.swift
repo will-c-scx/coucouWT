@@ -71,18 +71,13 @@ struct OverviewView: View {
                                     .lineLimit(1)
                                     .truncationMode(.tail)
                                 Spacer(minLength: 2)
-                                if agent.steps.count > 1 {
-                                    Text("\(min(agent.stepIndex + 1, agent.steps.count))/\(agent.steps.count)")
-                                        .font(.system(size: 11))
-                                        .foregroundColor(Color(hex: "#6B7079"))
-                                        .fixedSize()
-                                }
+                                SessionMetaText(activity: agent.activity)
                             }
                             .padding(.top, 6)
                             .padding(.leading, 108)
                             .padding(.trailing, 36)
 
-                            TickerView(task: agent)
+                            SessionTickerView(activity: agent.activity)
                                 .frame(height: 44)
                                 .padding(.top, 6)
                                 .padding(.leading, 108)
@@ -304,13 +299,27 @@ struct ErrorView: View {
 struct FinishedView: View {
     @ObservedObject var state: AppState
 
+    /// The prompt this turn worked on, shortened.
+    private var finishedLabel: String {
+        let prompt = state.focusTask?.activity.prompt ?? ""
+        return prompt.isEmpty ? "Claude Code finished" : SessionActivity.truncate(prompt, 48)
+    }
+
+    /// First sentence of Claude's final reply.
+    private var finishedHeadline: String {
+        let reply = state.focusTask?.activity.lastReply.map(SessionActivity.firstSentence) ?? ""
+        return reply.isEmpty ? "Session finished" : reply
+    }
+
     var body: some View {
         ZStack {
             CardBackground(wash: .green)
             VStack(alignment: .leading, spacing: 5) {
-                AgentWho(task: state.focusTask, label: "Claude Code finished")
-                Text(state.focusTask?.steps.last ?? "Session finished")
+                AgentWho(task: state.focusTask, label: finishedLabel)
+                Text(finishedHeadline)
                     .font(.system(size: 15, weight: .semibold))
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
                 HStack(spacing: 8) {
                     #if !APPSTORE
                     PrimaryButton("Open window") {
@@ -1192,7 +1201,7 @@ struct IntegrationCardView: View {
     private var agentSessionActive: Bool {
         guard let def = PillCatalog.definition(for: task.id) else { return false }
         guard def.category == .workspace else { return false }
-        return task.state != .idle || !task.steps.isEmpty
+        return task.state != .idle || !task.activity.isEmpty
     }
 
     // n8n with a finished execution: show result row instead of "Open n8n" button
@@ -1308,18 +1317,13 @@ struct IntegrationCardView: View {
                         .foregroundColor(Color(hex: "#8E939C"))
                         .lineLimit(1).truncationMode(.tail)
                     Spacer(minLength: 2)
-                    if task.steps.count > 1 {
-                        Text("\(min(task.stepIndex + 1, task.steps.count))/\(task.steps.count)")
-                            .font(.system(size: 11))
-                            .foregroundColor(Color(hex: "#6B7079"))
-                            .fixedSize()
-                    }
+                    SessionMetaText(activity: task.activity)
                 }
                 .padding(.top, 6)
                 .padding(.leading, 108)
                 .padding(.trailing, 36)
 
-                TickerView(task: task)
+                SessionTickerView(activity: task.activity)
                     .frame(height: 44)
                     .padding(.top, 6)
                     .padding(.leading, 108)
@@ -2293,156 +2297,100 @@ struct N8nDetailView: View {
     }
 }
 
-// MARK: - Ticker (overview scrolling task steps) V2
+// MARK: - Session ticker (Claude Code: prompt above, live action below)
 
-struct TickerView: View {
-    let task: AgentTask?
+struct SessionTickerView: View {
+    let activity: SessionActivity
 
-    @State private var rowA: String = "…"   // completed (above, left-shifted)
-    @State private var rowB: String = "…"   // current (below) → animates diagonally up-left
-    @State private var rowC: String = ""    // incoming current — slides in from below
-
-    @State private var rowAOffset: CGFloat = 0
-    @State private var rowAOpacity: Double = 1
-    @State private var rowBOffset: CGFloat = 22
-    @State private var rowBPhase:  Double  = 0   // 0=current, 1=completed (drives X+scale)
-    @State private var rowCOffset: CGFloat = 44
-    @State private var rowCOpacity: Double = 0
-
-    @State private var displayIndex: Int = -1
-    @State private var isTransitioning = false
-
-    private let completedScale: CGFloat = 11.5 / 13   // 0.885 — matches completed font size
-
-    var steps: [String] {
-        let raw = task?.steps ?? []
-        return raw.isEmpty ? ["…"] : raw
-    }
+    private let lineAnimation = Animation.timingCurve(0.4, 0, 0.2, 1, duration: 0.38)
 
     var body: some View {
-        ZStack(alignment: .topLeading) {
-            Color.clear
+        VStack(alignment: .leading, spacing: 0) {
+            // Top row: what you asked for
+            Text(activity.prompt)
+                .font(.system(size: 11.5, weight: .medium))
+                .foregroundColor(Color(hex: "#8E939C"))
+                .lineLimit(1).truncationMode(.tail)
+                .frame(maxWidth: .infinity, minHeight: 22, maxHeight: 22, alignment: .leading)
+                .id(activity.prompt)
+                .transition(.opacity)
+                .animation(.easeOut(duration: 0.25), value: activity.prompt)
 
-            // Row A: completed row — always rendered at phase=1 + completedScale
-            TickerRowView(text: rowA, phase: 1.0)
-                .scaleEffect(completedScale, anchor: .leading)
-                .offset(x: -10, y: rowAOffset)
-                .opacity(rowAOpacity)
-
-            // Row B: current step → animates diagonally up-left, phase 0→1, scale 1→completedScale
-            TickerRowView(text: rowB, phase: rowBPhase)
-                .scaleEffect(1 - rowBPhase * (1 - completedScale), anchor: .leading)
-                .offset(x: -rowBPhase * 10, y: rowBOffset)
-
-            // Row C: incoming new step — slides in from below at phase=0
-            TickerRowView(text: rowC, phase: 0.0)
-                .offset(y: rowCOffset)
-                .opacity(rowCOpacity)
-        }
-        .frame(height: 44)
-        .clipped()
-        .mask(LinearGradient(
-            stops: [
-                .init(color: .clear, location: 0),
-                .init(color: .black, location: 0.12),
-                .init(color: .black, location: 0.85),
-                .init(color: .clear, location: 1)
-            ],
-            startPoint: .top, endPoint: .bottom
-        ))
-        .onAppear {
-            let idx = task?.stepIndex ?? -1
-            displayIndex = idx
-            if idx >= 0, !steps.isEmpty {
-                rowA = idx > 0 ? steps[max(0, idx - 1)] : "…"
-                rowB = steps[min(idx, steps.count - 1)]
+            // Bottom row: what is happening now — a new line slides up, a merged update doesn't
+            ZStack(alignment: .leading) {
+                SessionLineRow(text: activity.displayLine.isEmpty ? "…" : activity.displayLine,
+                               busy: activity.busy, asking: activity.asking)
+                    .id(activity.lineID)
+                    .transition(.asymmetric(insertion: .offset(y: 22).combined(with: .opacity),
+                                            removal: .offset(y: -22).combined(with: .opacity)))
             }
+            .frame(height: 22)
+            .clipped()
+            .animation(lineAnimation, value: activity.lineID)
         }
-        .onChange(of: task?.steps.count) { _, _ in
-            guard let task, !task.steps.isEmpty, !isTransitioning else { return }
-            let newIdx = task.stepIndex
-            if displayIndex < 0 {
-                displayIndex = newIdx
-                rowA = newIdx > 0 ? steps[max(0, newIdx - 1)] : "…"
-                rowB = steps[min(newIdx, steps.count - 1)]
-                return
-            }
-            guard newIdx != displayIndex else { return }
-            tickerAnimate(to: newIdx)
-        }
-    }
-
-    private func tickerAnimate(to newIdx: Int) {
-        isTransitioning = true
-        rowC = steps[min(newIdx, steps.count - 1)]
-        rowCOffset = 44
-        rowCOpacity = 0
-
-        // Old completed (rowA): fades + slides further up
-        withAnimation(.easeOut(duration: 0.28)) {
-            rowAOffset  = -22
-            rowAOpacity = 0
-        }
-
-        // Current (rowB): moves diagonally up-left + shrinks to completed size
-        withAnimation(.timingCurve(0.4, 0, 0.2, 1, duration: 0.38)) {
-            rowBOffset = 0
-            rowBPhase  = 1
-        }
-
-        // New current (rowC): slides in from below
-        withAnimation(.timingCurve(0.4, 0, 0.2, 1, duration: 0.38)) {
-            rowCOffset  = 22
-            rowCOpacity = 1
-        }
-
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.50) {
-            self.displayIndex    = newIdx
-            self.rowA            = self.rowB
-            self.rowAOffset      = 0
-            self.rowAOpacity     = 1
-            self.rowB            = self.rowC
-            self.rowBOffset      = 22
-            self.rowBPhase       = 0
-            self.rowCOffset      = 44
-            self.rowCOpacity     = 0
-            self.isTransitioning = false
-        }
+        .frame(height: 44, alignment: .topLeading)
     }
 }
 
-struct TickerRowView: View {
+struct SessionLineRow: View {
     let text: String
-    let phase: Double   // 0 = current (shimmer, large), 1 = completed (dim, scaled down by caller)
+    let busy: Bool   // shimmer while Claude works; plain text when done or waiting on you
+    var asking: Bool = false   // the line is a question Claude asked
+
+    private var icon: String {
+        if asking { return "questionmark" }
+        return text.hasPrefix("Done") ? "checkmark" : "chevron.right"
+    }
 
     var body: some View {
         HStack(spacing: 6) {
-            // Icon: chevron fades out first half, checkmark fades in second half
-            ZStack {
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 9, weight: .medium))
-                    .foregroundColor(Color(hex: "#8E939C"))
-                    .opacity(max(0, 1 - phase * 2))
-                Image(systemName: "checkmark")
-                    .font(.system(size: 8, weight: .regular))
-                    .foregroundColor(Color(hex: "#454850"))
-                    .opacity(max(0, phase * 2 - 1))
-            }
-            .frame(width: 12, alignment: .center)
-
-            // Text: shimmer fades out, dim completed text fades in (overlapping cross-fade)
-            ZStack(alignment: .leading) {
+            Image(systemName: icon)
+                .font(.system(size: 9, weight: .medium))
+                .foregroundColor(Color(hex: "#8E939C"))
+                .frame(width: 12, alignment: .center)
+            if busy {
                 TickerShimmerText(text: text)
-                    .opacity(max(0, 1 - phase * 1.6))
+            } else {
                 Text(text)
                     .font(.system(size: 13, weight: .medium))
-                    .foregroundColor(Color(hex: "#6B7079"))
+                    .foregroundColor(Color(hex: "#E8E9EC"))
                     .lineLimit(1).truncationMode(.tail)
-                    .opacity(min(1, max(0, phase * 2 - 0.4)))
             }
         }
         .frame(height: 22, alignment: .leading)
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+/// Header meta for a Claude Code session: "Step 3/6 · 1m 12s". Ticks only while a turn runs.
+struct SessionMetaText: View {
+    let activity: SessionActivity
+
+    var body: some View {
+        if let start = activity.turnStart, activity.turnEnd == nil {
+            TimelineView(.periodic(from: .now, by: 1)) { ctx in
+                label(elapsed: ctx.date.timeIntervalSince(start))
+            }
+        } else if let start = activity.turnStart, let end = activity.turnEnd {
+            label(elapsed: end.timeIntervalSince(start))
+        } else if activity.planLabel != nil {
+            label(elapsed: nil)
+        }
+    }
+
+    private func label(elapsed: TimeInterval?) -> some View {
+        let parts = [activity.planLabel, elapsed.map(Self.format)].compactMap { $0 }
+        return Text(parts.joined(separator: " · "))
+            .font(.system(size: 11).monospacedDigit())
+            .foregroundColor(Color(hex: "#6B7079"))
+            .fixedSize()
+    }
+
+    static func format(_ t: TimeInterval) -> String {
+        let s = max(0, Int(t))
+        if s < 60 { return "\(s)s" }
+        if s < 3600 { return "\(s / 60)m \(s % 60)s" }
+        return "\(s / 3600)h \(s % 3600 / 60)m"
     }
 }
 

@@ -62,6 +62,7 @@ struct AgentTask: Identifiable, Equatable {
     var sessionHost: SessionHost? = nil  // app the session runs in (per-worktree pills)
     var sessionIds: Set<String> = []     // live Claude Code sessions in this worktree pill
     var lastEventAt: Date? = nil         // last hook event, for idle cleanup
+    var activity = SessionActivity()     // ticker content for Claude Code sessions
 }
 
 enum AgentSource: Equatable {

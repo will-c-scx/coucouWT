@@ -40,6 +40,8 @@ final class HookServer: @unchecked Sendable {
     private var pendingApprovalFD: Int32 = -1         // held open while user decides
     private var approvalFDSource: (any DispatchSourceRead)? = nil  // monitors pendingApprovalFD
     private var activeSessionId: String? = nil        // current Claude Code session
+    private var thinkingTimers: [String: DispatchWorkItem] = [:]   // pill id → pending "Thinking…"
+    private var loggedPayloadShapes: Set<String> = []                // event types whose keys were logged
     private var focusBeforeApproval: String? = nil    // saved focus to restore after approval
 
     private init() {}
@@ -65,6 +67,7 @@ final class HookServer: @unchecked Sendable {
         state.pendingApproval = nil
         state.isPinned = false
         state.updateTask(id: pillId, state: .working)
+        updateActivity(id: pillId) { $0.resume() }
         clearPillBadge(id: pillId)
         // Restore focus to the pill that was focused before the approval card appeared.
         if let prev = focusBeforeApproval {
@@ -213,6 +216,7 @@ final class HookServer: @unchecked Sendable {
         let cwd = payload["cwd"] as? String ?? ""
         let rawName = URL(fileURLWithPath: cwd).lastPathComponent
         let projectName = aliasProjectName(rawName.isEmpty ? "Session" : rawName)
+        logPayloadShape(name: name, payload: payload)
 
         let termProgram = payload["term_program"] as? String ?? ""
         let bundleId    = payload["bundle_id"]    as? String ?? ""
@@ -272,6 +276,7 @@ final class HookServer: @unchecked Sendable {
         case "SessionStart":
             activeSessionId = sessionId
             upsert()
+            updateActivity(id: agentId) { $0.resetPlan() }
             nbLog("SessionStart \(projectName) (\(sessionId.prefix(8)))")
             if state.isPresent { expandIfNeeded(to: .overview) }
             SoundEngine.shared.play("work")
@@ -279,59 +284,78 @@ final class HookServer: @unchecked Sendable {
         case "UserPromptSubmit":
             activeSessionId = sessionId
             upsert()
+            cancelThinking(id: agentId)
             state.updateTask(id: agentId, state: .thinking)
-            if let prompt = payload["prompt"] as? String, !prompt.isEmpty {
-                appendStep(id: agentId, step: String(prompt.prefix(60)))
-            }
+            let prompt = payload["prompt"] as? String ?? payload["prompt_text"] as? String ?? ""
+            updateActivity(id: agentId) { $0.beginTurn(prompt: prompt) }
             if state.isPresent { expandIfNeeded(to: .overview) }
 
         case "PreToolUse":
             activeSessionId = sessionId
             upsert()
-            state.updateTask(id: agentId, state: .working)
+            cancelThinking(id: agentId)
             let tool = payload["tool_name"] as? String ?? "Tool"
             let input = payload["tool_input"] as? [String: Any] ?? [:]
-            let step = frenchStep(tool: tool, input: input)
-            appendStep(id: agentId, step: step)
+            state.updateTask(id: agentId, state: tool == "AskUserQuestion" ? .question : .working)
+            updateActivity(id: agentId) { $0.toolStarted(tool: tool, input: input) }
             nbLog("PreToolUse \(tool)")
 
-        case "PostToolUse":
+        case "PostToolUse", "PostToolUseFailure":
+            let tool = payload["tool_name"] as? String ?? "Tool"
             state.updateTask(id: agentId, state: .working)
-
-        case "PostToolUseFailure":
-            state.updateTask(id: agentId, state: .working)
-            appendStep(id: agentId, step: "⚠ failed")
+            updateActivity(id: agentId) {
+                $0.toolFinished(tool: tool, response: payload["tool_response"],
+                                failed: name == "PostToolUseFailure")
+            }
+            scheduleThinking(id: agentId)
 
         case "Notification":
             let message = payload["message"] as? String ?? ""
+            let type = payload["notification_type"] as? String ?? ""
             let lower = message.lowercased()
-            if lower.contains("rate limit") || lower.contains("limite d") {
+            if lower.contains("rate limit") {
                 state.updateTask(id: agentId, state: .ratelimit)
                 SoundEngine.shared.play("rate")
-            } else if message.hasSuffix("?") {
+            } else if type == "idle_prompt" {
+                updateActivity(id: agentId) { $0.waitingForYou() }
+            } else if type == "permission_prompt" {
+                // The PermissionRequest hook already set the line (or a question is showing).
+                let current = state.tasks.first(where: { $0.id == agentId })?.activity
+                if current?.asking != true, current?.line.hasPrefix("Needs approval") != true {
+                    let tool = message.range(of: #"(?<=use )\S+"#, options: .regularExpression)
+                        .map { String(message[$0]) } ?? ""
+                    updateActivity(id: agentId) { $0.needsApproval(tool: tool) }
+                }
+            } else if ["agent_needs_input", "elicitation_dialog", "elicitation_url_dialog"].contains(type)
+                        || (type.isEmpty && message.hasSuffix("?")) {
                 state.updateTask(id: agentId, state: .question)
-                appendStep(id: agentId, step: message)
+                updateActivity(id: agentId) { $0.question(SessionActivity.truncate(message, 80)) }
             }
 
         case "Stop":
+            cancelThinking(id: agentId)
             state.updateTask(id: agentId, state: .finished)
-            if let message = payload["message"] as? String, !message.isEmpty {
-                appendStep(id: agentId, step: String(message.prefix(60)))
-            }
+            let reply = payload["last_assistant_message"] as? String
+            updateActivity(id: agentId) { $0.finish(reply: reply) }
             SoundEngine.shared.play("finish")
             alertOrBadge(pillId: agentId, focused: focused, view: .finished, badge: .finished)
             DispatchQueue.main.asyncAfter(deadline: .now() + 5.2) {
+                // A new prompt may have started in the meantime.
+                guard AppState.shared.tasks.first(where: { $0.id == agentId })?.state == .finished else { return }
                 AppState.shared.updateTask(id: agentId, state: .idle)
                 self.clearPillBadge(id: agentId)
             }
 
         case "StopFailure":
+            cancelThinking(id: agentId)
             state.updateTask(id: agentId, state: .error)
+            updateActivity(id: agentId) { $0.fail(errorType: payload["error_type"] as? String) }
             SoundEngine.shared.play("error")
             alertOrBadge(pillId: agentId, focused: focused, view: .error, badge: .error)
 
         case "SessionEnd":
             activeSessionId = nil
+            cancelThinking(id: agentId)
             if isSessionPill {
                 ClaudeSessionPills.endSession(sessionId, pillId: agentId)
             } else {
@@ -339,10 +363,10 @@ final class HookServer: @unchecked Sendable {
             }
 
         case "SubagentStart":
-            appendStep(id: agentId, step: "+ subagent")
+            updateActivity(id: agentId) { $0.subagentStarted() }
 
         case "SubagentStop":
-            appendStep(id: agentId, step: "• subagent done")
+            updateActivity(id: agentId) { $0.subagentStopped() }
 
         default:
             break
@@ -409,6 +433,17 @@ final class HookServer: @unchecked Sendable {
         let inputKey = Self.approvalInputKey(toolInput)
         nbLog("PermissionRequest \(tool) [\(pillId)]")
 
+        // Claude's questions are answered in Claude Code's own picker, not with Allow / Deny:
+        // reply with no decision so Claude Code shows it, and put the question on the pill.
+        if tool == "AskUserQuestion" {
+            Task.detached { [weak self] in
+                self?.sendLine(fd: fd, text: #"{"permissionDecision":"ask"}"#)
+                close(fd)
+            }
+            showQuestion(pillId: pillId, input: toolInput)
+            return
+        }
+
         if pendingApprovalFD >= 0 {
             // Displace the previous request: write "ask" then cancel its source.
             // The cancel handler closes the old fd — never close it directly.
@@ -425,7 +460,9 @@ final class HookServer: @unchecked Sendable {
         activeSessionId = sessionId
 
         if isCursorEditor { upsertWorkspaceTask(id: pillId, projectName: projectName, cwd: cwd) }
+        cancelThinking(id: pillId)
         state.updateTask(id: pillId, state: .approval)
+        updateActivity(id: pillId) { $0.needsApproval(tool: tool) }
         state.pendingApproval = ApprovalInfo(sessionId: sessionId, tool: tool,
                                               command: command, inputKey: inputKey, pillId: pillId)
         state.isPinned = true
@@ -493,6 +530,7 @@ final class HookServer: @unchecked Sendable {
         state.pendingApproval = nil
         state.isPinned = false
         state.updateTask(id: pillId, state: .working)
+        updateActivity(id: pillId) { $0.resume() }
         clearPillBadge(id: pillId)
         // Restore focus to the pill that was focused before the approval card appeared.
         if let prev = focusBeforeApproval {
@@ -568,13 +606,57 @@ final class HookServer: @unchecked Sendable {
         state.tasks[idx].pillBadge = nil
     }
 
+    // MARK: - Questions
+
+    /// Shows Claude's question in the ticker and opens the island on that pill.
     @MainActor
-    private func appendStep(id: String, step: String) {
+    private func showQuestion(pillId: String, input: [String: Any]) {
+        let state = AppState.shared
+        cancelThinking(id: pillId)
+        state.updateTask(id: pillId, state: .question)
+        updateActivity(id: pillId) { $0.askUser(input) }
+        SoundEngine.shared.play("question")
+        guard state.pendingApproval == nil else { return }   // an approval card keeps the island
+        if state.mode == .expanded {
+            if state.view == .overview { state.focusId = pillId }
+        } else {
+            state.focusId = pillId
+            NotificationCenter.default.post(name: .hookAlert, object: IslandView.overview)
+        }
+    }
+
+    // MARK: - Ticker activity
+
+    @MainActor
+    private func updateActivity(id: String, _ change: (inout SessionActivity) -> Void) {
         let state = AppState.shared
         guard let idx = state.tasks.firstIndex(where: { $0.id == id }) else { return }
-        state.tasks[idx].steps.append(step)
-        if state.tasks[idx].steps.count > 20 { state.tasks[idx].steps.removeFirst() }
-        state.tasks[idx].stepIndex = state.tasks[idx].steps.count - 1
+        change(&state.tasks[idx].activity)
+    }
+
+    /// Hooks only say when tools start and stop; when no tool has run for a moment,
+    /// Claude is reasoning or writing — show "Thinking…" instead of a stale action.
+    @MainActor
+    private func scheduleThinking(id: String) {
+        cancelThinking(id: id)
+        let work = DispatchWorkItem { [weak self] in
+            MainActor.assumeIsolated {
+                self?.thinkingTimers[id] = nil
+                let state = AppState.shared
+                guard let task = state.tasks.first(where: { $0.id == id }),
+                      task.activity.runningTools == 0, task.activity.busy,
+                      task.activity.turnEnd == nil, task.state == .working else { return }
+                state.updateTask(id: id, state: .thinking)
+                self?.updateActivity(id: id) { $0.markThinking() }
+            }
+        }
+        thinkingTimers[id] = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5, execute: work)
+    }
+
+    @MainActor
+    private func cancelThinking(id: String) {
+        thinkingTimers.removeValue(forKey: id)?.cancel()
     }
 
     // MARK: - Project name alias mapping
@@ -588,39 +670,20 @@ final class HookServer: @unchecked Sendable {
         return aliases[name.lowercased()] ?? name
     }
 
-    // MARK: - French step labels
-
-    private func frenchStep(tool: String, input: [String: Any]) -> String {
-        let labels: [String: String] = [
-            "Bash":       "Exécute",
-            "Read":       "Lit",
-            "Write":      "Écrit",
-            "Edit":       "Modifie",
-            "Glob":       "Cherche",
-            "Grep":       "Recherche",
-            "WebSearch":  "Recherche web",
-            "WebFetch":   "Récupère",
-            "TodoWrite":  "Tâches",
-            "Task":       "Agent",
-            "LS":         "Liste",
-            "MultiEdit":  "Modifie",
-            "NotebookEdit": "Notebook",
-        ]
-        let label = labels[tool] ?? tool
-        if let cmd = input["command"] as? String {
-            let short = String(cmd.prefix(40))
-            return "\(label) · \(short)"
-        } else if let path = input["path"] as? String {
-            return "\(label) · \(URL(fileURLWithPath: path).lastPathComponent)"
-        } else if let file = input["file_path"] as? String {
-            return "\(label) · \(URL(fileURLWithPath: file).lastPathComponent)"
-        } else if let query = input["query"] as? String {
-            return "\(label) · \(String(query.prefix(40)))"
-        }
-        return label
-    }
-
     // MARK: - Logging
+
+    /// Logs the field names (never the values) of the first payload of each event or tool,
+    /// so a renamed hook field shows up in nb.log instead of silently blanking the ticker.
+    private func logPayloadShape(name: String, payload: [String: Any]) {
+        let tool = payload["tool_name"] as? String
+        let key = tool.map { "\(name):\($0)" } ?? name
+        guard loggedPayloadShapes.insert(key).inserted else { return }
+        var line = "shape \(key) keys=\(payload.keys.sorted().joined(separator: ","))"
+        if let input = payload["tool_input"] as? [String: Any] {
+            line += " tool_input=\(input.keys.sorted().joined(separator: ","))"
+        }
+        nbLog(line)
+    }
 
     private func nbLog(_ message: String) {
         appendAppLog("nb.log", message)
