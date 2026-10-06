@@ -341,7 +341,7 @@ final class IslandWindowController: NSWindowController {
             return
         }
         // Anything that opens or reveals the island ends a fold-away in progress.
-        if mode != .hidden, state.foldedAway { state.foldedAway = false }
+        if mode != .hidden { cancelFoldAway() }
         let shrinking = modeLevel(mode) < modeLevel(prev)
         let anim: Animation = shrinking
             ? .timingCurve(0.45, 0, 0.2, 1, duration: 0.34)
@@ -355,6 +355,7 @@ final class IslandWindowController: NSWindowController {
     }
 
     func expand(to view: IslandView) {
+        cancelFoldAway()   // a new alert mid-fold must show, not stay folded
         state.view = view
         if state.mode == .expanded {
             // Already expanded — just switch view
@@ -850,19 +851,28 @@ final class IslandWindowController: NSWindowController {
     /// saved display and shows it there at `mode` (the bar, or nothing if it was hiding).
     private func foldAwayAndReturnHome(then mode: IslandMode) {
         IslandDisplay.alertScreenID = nil   // the panel stays put until moveToChosenScreen
-        state.foldedAway = true             // set first: the mode change reads it
-        setMode(.hidden)
-        // Let the shrink animation (0.34 s) finish before the panel moves.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
-            guard let self, IslandDisplay.alertScreenID == nil else { return }  // a new alert took over
-            let reopened = self.state.mode != .hidden
+        SoundEngine.shared.play("close")
+        if fsm.isHeldOpen?() != true { state.isPinned = false }
+        withAnimation(.timingCurve(0.45, 0, 0.2, 1, duration: 0.32)) { state.foldedAway = true }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.34) { [weak self] in
+            guard let self else { return }
+            guard self.state.foldedAway else {
+                // Reopened by a hover mid-fold: leave the alert's display.
+                if self.state.mode != .expanded { self.moveToChosenScreen() }
+                return
+            }
+            // Out of sight: move home and take the resting size there, then drop in from the top.
             self.moveToChosenScreen()
-            if !reopened && mode == .compact {
-                self.setMode(.compact)          // drops back in as the bar on the saved display
-            } else {
-                self.state.foldedAway = false   // back to the resting size there
+            self.state.mode = mode
+            DispatchQueue.main.async {
+                withAnimation(.spring(response: 0.45, dampingFraction: 0.82)) { self.state.foldedAway = false }
             }
         }
+    }
+
+    private func cancelFoldAway() {
+        guard state.foldedAway else { return }
+        withAnimation(.spring(response: 0.45, dampingFraction: 0.82)) { state.foldedAway = false }
     }
 
     // MARK: - Notch geometry (static)
