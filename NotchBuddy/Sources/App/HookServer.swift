@@ -338,11 +338,7 @@ final class HookServer: @unchecked Sendable {
             let reply = payload["last_assistant_message"] as? String
             updateActivity(id: agentId) { $0.finish(reply: reply) }
             SoundEngine.shared.play("finish")
-            if focused {
-                expandIfNeeded(to: .finished)
-            } else {
-                setPillBadge(id: agentId, badge: .finished)
-            }
+            alertOrBadge(pillId: agentId, focused: focused, view: .finished, badge: .finished)
             DispatchQueue.main.asyncAfter(deadline: .now() + 5.2) {
                 // A new prompt may have started in the meantime.
                 guard AppState.shared.tasks.first(where: { $0.id == agentId })?.state == .finished else { return }
@@ -355,11 +351,7 @@ final class HookServer: @unchecked Sendable {
             state.updateTask(id: agentId, state: .error)
             updateActivity(id: agentId) { $0.fail(errorType: payload["error_type"] as? String) }
             SoundEngine.shared.play("error")
-            if focused {
-                expandIfNeeded(to: .error)
-            } else {
-                setPillBadge(id: agentId, badge: .error)
-            }
+            alertOrBadge(pillId: agentId, focused: focused, view: .error, badge: .error)
 
         case "SessionEnd":
             activeSessionId = nil
@@ -584,6 +576,21 @@ final class HookServer: @unchecked Sendable {
     }
 
     // MARK: - Badge helpers
+
+    /// Shows a session's finished or error card. A closed island opens on that session even
+    /// if another pill had focus; an island already showing something else only gets a badge.
+    @MainActor
+    private func alertOrBadge(pillId: String, focused: Bool, view: IslandView, badge: PillBadge) {
+        let state = AppState.shared
+        if focused {
+            expandIfNeeded(to: view)
+        } else if state.mode != .expanded && state.pendingApproval == nil {
+            state.focusId = pillId
+            expandIfNeeded(to: view)
+        } else {
+            setPillBadge(id: pillId, badge: badge)
+        }
+    }
 
     @MainActor
     private func setPillBadge(id: String, badge: PillBadge) {
