@@ -340,8 +340,12 @@ final class IslandWindowController: NSWindowController {
             foldAwayAndReturnHome(then: mode)
             return
         }
-        // Anything that opens or reveals the island ends a fold-away in progress.
-        if mode != .hidden { cancelFoldAway() }
+        // Mid-fold, closing again (collapse runs through the FSM and directly) only updates
+        // where the island ends up. Only opening it (expand) cancels the fold.
+        if state.foldedAway {
+            foldTarget = mode
+            return
+        }
         let shrinking = modeLevel(mode) < modeLevel(prev)
         let anim: Animation = shrinking
             ? .timingCurve(0.45, 0, 0.2, 1, duration: 0.34)
@@ -850,6 +854,7 @@ final class IslandWindowController: NSWindowController {
     /// Shrinks the alert out of sight on its display, then moves the island back to the
     /// saved display and shows it there at `mode` (the bar, or nothing if it was hiding).
     private func foldAwayAndReturnHome(then mode: IslandMode) {
+        foldTarget = mode
         IslandDisplay.alertScreenID = nil   // the panel stays put until moveToChosenScreen
         SoundEngine.shared.play("close")
         if fsm.isHeldOpen?() != true { state.isPinned = false }
@@ -863,12 +868,15 @@ final class IslandWindowController: NSWindowController {
             }
             // Out of sight: move home and take the resting size there, then drop in from the top.
             self.moveToChosenScreen()
-            self.state.mode = mode
+            self.state.mode = self.foldTarget
             DispatchQueue.main.async {
                 withAnimation(.spring(response: 0.45, dampingFraction: 0.82)) { self.state.foldedAway = false }
             }
         }
     }
+
+    /// Mode the island takes back home once the fold-away ends.
+    private var foldTarget: IslandMode = .compact
 
     private func cancelFoldAway() {
         guard state.foldedAway else { return }
