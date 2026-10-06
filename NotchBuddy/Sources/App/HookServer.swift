@@ -614,7 +614,7 @@ final class HookServer: @unchecked Sendable {
             if state.view == .overview { state.focusId = pillId }
         } else {
             state.focusId = pillId
-            NotificationCenter.default.post(name: .hookExpand, object: IslandView.overview)
+            NotificationCenter.default.post(name: .hookAlert, object: IslandView.overview)
         }
     }
 
