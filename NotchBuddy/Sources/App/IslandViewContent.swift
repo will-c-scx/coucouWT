@@ -178,6 +178,10 @@ struct OverviewView: View {
                 #endif
             }
         }
+        // Opened something outside the island: fold back to the bar, like Open window.
+        if !task.id.hasPrefix("ai_") {
+            NotificationCenter.default.post(name: .islandCollapse, object: nil)
+        }
     }
 }
 

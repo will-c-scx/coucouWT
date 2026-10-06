@@ -12,6 +12,10 @@ struct IslandRootView: View {
             Color.clear
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             IslandContainer(state: state)
+                // Folding away scales everything together into the top edge, so no card
+                // or Mochi is left behind while the shape shrinks.
+                .scaleEffect(state.foldedAway ? 0.02 : 1, anchor: .top)
+                .opacity(state.foldedAway ? 0 : 1)
                 .frame(maxWidth: .infinity, alignment: .center)
         }
         .ignoresSafeArea()
@@ -125,23 +129,12 @@ struct IslandContainer: View {
                                     nw: state.notchWidth, nh: state.notchHeight)
             let cr  = newMode == .expanded ? IslandConst.expandedCorner : IslandConst.roundedCorner
             let tr: CGFloat = 0
-            withAnimation(anim) {
+            // Folded out of sight: resize at once, it's invisible.
+            withAnimation(state.foldedAway ? nil : anim) {
                 islandWidth      = w
-                islandHeight     = state.foldedAway ? 0
-                    : (newMode == .expanded && state.view == .prompt) ? chatPromptHeight : h
+                islandHeight     = (newMode == .expanded && state.view == .prompt) ? chatPromptHeight : h
                 cornerRadius     = cr
                 islandTopRadius  = tr
-            }
-        }
-        .onChange(of: state.foldedAway) { _, folded in
-            // Folding away: shrink into the top edge. Back home: grow to the current mode.
-            let (w, h) = islandSize(mode: state.mode, view: state.view,
-                                    progress: state.uploadProgress,
-                                    nw: state.notchWidth, nh: state.notchHeight)
-            withAnimation(folded ? closeEase : openSpring) {
-                islandWidth  = w
-                islandHeight = folded ? 0
-                    : (state.mode == .expanded && state.view == .prompt) ? chatPromptHeight : h
             }
         }
         .onChange(of: state.view) { _, newView in
