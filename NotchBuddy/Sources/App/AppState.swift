@@ -25,6 +25,9 @@ final class AppState: ObservableObject {
     var notchWidth:  CGFloat = IslandConst.notchWidth
     var notchHeight: CGFloat = IslandConst.notchHeight
     var hasNotch = true
+    /// True while an alert shown away from the saved display shrinks out of sight:
+    /// the island's height animates to zero so nothing is left on that display.
+    @Published var foldedAway = false
 
     // Last app active before NotchBuddy (for window context capture)
     var lastExternalApp: NSRunningApplication? = nil

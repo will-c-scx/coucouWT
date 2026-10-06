@@ -127,9 +127,21 @@ struct IslandContainer: View {
             let tr: CGFloat = 0
             withAnimation(anim) {
                 islandWidth      = w
-                islandHeight     = (newMode == .expanded && state.view == .prompt) ? chatPromptHeight : h
+                islandHeight     = state.foldedAway ? 0
+                    : (newMode == .expanded && state.view == .prompt) ? chatPromptHeight : h
                 cornerRadius     = cr
                 islandTopRadius  = tr
+            }
+        }
+        .onChange(of: state.foldedAway) { _, folded in
+            // Folding away: shrink into the top edge. Back home: grow to the current mode.
+            let (w, h) = islandSize(mode: state.mode, view: state.view,
+                                    progress: state.uploadProgress,
+                                    nw: state.notchWidth, nh: state.notchHeight)
+            withAnimation(folded ? closeEase : openSpring) {
+                islandWidth  = w
+                islandHeight = folded ? 0
+                    : (state.mode == .expanded && state.view == .prompt) ? chatPromptHeight : h
             }
         }
         .onChange(of: state.view) { _, newView in
