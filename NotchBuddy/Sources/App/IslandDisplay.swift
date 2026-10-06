@@ -45,10 +45,38 @@ enum IslandDisplayChoice: Hashable {
 @MainActor
 enum IslandDisplay {
 
-    /// The screen for the saved choice. Falls back to the built-in (notch) screen,
-    /// then to the main screen, when the saved monitor is unplugged.
+    /// Set while an alert is shown on the display you're working on, away from the saved one.
+    static var alertScreenID: CGDirectDisplayID?
+
+    /// The screen the island is on: the alert's display while one is showing there, else the
+    /// saved choice. Falls back to the built-in (notch) screen, then to the main screen,
+    /// when the saved monitor is unplugged.
     static func current() -> NSScreen {
-        screen(for: .saved)
+        if let id = alertScreenID, let s = NSScreen.screens.first(where: { displayID(of: $0) == id }) {
+            return s
+        }
+        return screen(for: .saved)
+    }
+
+    /// The display you're working on: where the frontmost app's top window sits, else the
+    /// one under the mouse. NSScreen.main can't tell from a background app (it reports the
+    /// menu-bar display). Window bounds need no Screen Recording permission.
+    static func activeScreen() -> NSScreen? {
+        if let pid = NSWorkspace.shared.frontmostApplication?.processIdentifier,
+           let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements],
+                                                    kCGNullWindowID) as? [[String: Any]],
+           let primaryHeight = NSScreen.screens.first?.frame.height,
+           let top = windows.first(where: {
+               ($0[kCGWindowOwnerPID as String] as? Int32) == pid && ($0[kCGWindowLayer as String] as? Int) == 0
+           }),
+           let bounds = top[kCGWindowBounds as String] as? [String: CGFloat],
+           let x = bounds["X"], let y = bounds["Y"], let w = bounds["Width"], let h = bounds["Height"] {
+            // CG window bounds start at the top-left of the primary display; AppKit at its bottom-left.
+            let center = NSPoint(x: x + w / 2, y: primaryHeight - y - h / 2)
+            if let s = NSScreen.screens.first(where: { NSPointInRect(center, $0.frame) }) { return s }
+        }
+        let mouse = NSEvent.mouseLocation
+        return NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) }
     }
 
     static func screen(for choice: IslandDisplayChoice) -> NSScreen {
