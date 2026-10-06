@@ -334,6 +334,14 @@ final class IslandWindowController: NSWindowController {
     func setMode(_ mode: IslandMode) {
         let prev = state.mode
         guard mode != prev else { return }
+        // An alert shown away from the saved display folds all the way into the top edge
+        // instead of stopping at the bar, then reappears at `mode` back home.
+        if prev == .expanded, mode != .expanded, IslandDisplay.alertScreenID != nil {
+            foldAwayAndReturnHome(then: mode)
+            return
+        }
+        // Anything that opens or reveals the island ends a fold-away in progress.
+        if mode != .hidden, state.foldedAway { state.foldedAway = false }
         let shrinking = modeLevel(mode) < modeLevel(prev)
         let anim: Animation = shrinking
             ? .timingCurve(0.45, 0, 0.2, 1, duration: 0.34)
@@ -343,7 +351,6 @@ final class IslandWindowController: NSWindowController {
         if prev == .expanded {
             SoundEngine.shared.play("close")
             if fsm.isHeldOpen?() != true { state.isPinned = false }
-            returnHomeAfterAlert()
         }
     }
 
@@ -839,14 +846,22 @@ final class IslandWindowController: NSWindowController {
         moveToChosenScreen()
     }
 
-    /// Once the alert folds away, the island goes back to its saved display.
-    private func returnHomeAfterAlert() {
-        guard IslandDisplay.alertScreenID != nil else { return }
-        // Let the shrink animation (0.34 s) finish on the alert's display first.
+    /// Shrinks the alert out of sight on its display, then moves the island back to the
+    /// saved display and shows it there at `mode` (the bar, or nothing if it was hiding).
+    private func foldAwayAndReturnHome(then mode: IslandMode) {
+        IslandDisplay.alertScreenID = nil   // the panel stays put until moveToChosenScreen
+        state.foldedAway = true             // set first: the mode change reads it
+        setMode(.hidden)
+        // Let the shrink animation (0.34 s) finish before the panel moves.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
-            guard let self, self.state.mode != .expanded, IslandDisplay.alertScreenID != nil else { return }
-            IslandDisplay.alertScreenID = nil
+            guard let self, IslandDisplay.alertScreenID == nil else { return }  // a new alert took over
+            let reopened = self.state.mode != .hidden
             self.moveToChosenScreen()
+            if !reopened && mode == .compact {
+                self.setMode(.compact)          // drops back in as the bar on the saved display
+            } else {
+                self.state.foldedAway = false   // back to the resting size there
+            }
         }
     }
 
