@@ -405,8 +405,8 @@ final class HookServer: @unchecked Sendable {
                 state.view = view
             }
         } else if isAlert {
-            // Alerts always force-expand
-            NotificationCenter.default.post(name: .hookExpand, object: view)
+            // Alerts always force-expand, on the display you're working on
+            NotificationCenter.default.post(name: .hookAlert, object: view)
         } else if state.mode == .hidden {
             // Non-alert work events: reveal compact only, never force-expand
             NotificationCenter.default.post(name: .hookReveal, object: nil)

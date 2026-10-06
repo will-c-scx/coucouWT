@@ -343,6 +343,7 @@ final class IslandWindowController: NSWindowController {
         if prev == .expanded {
             SoundEngine.shared.play("close")
             if fsm.isHeldOpen?() != true { state.isPinned = false }
+            returnHomeAfterAlert()
         }
     }
 
@@ -389,6 +390,14 @@ final class IslandWindowController: NSWindowController {
         // Hook server expand requests (alerts only)
         NotificationCenter.default.addObserver(forName: .hookExpand, object: nil, queue: .main) { [weak self] note in
             guard let self, let view = note.object as? IslandView else { return }
+            self.fsm.openedExternally()
+            self.expand(to: view)
+        }
+
+        // Hook server alerts: drop in on the display you're working on, then expand.
+        NotificationCenter.default.addObserver(forName: .hookAlert, object: nil, queue: .main) { [weak self] note in
+            guard let self, let view = note.object as? IslandView else { return }
+            self.moveToActiveScreenForAlert()
             self.fsm.openedExternally()
             self.expand(to: view)
         }
@@ -821,6 +830,26 @@ final class IslandWindowController: NSWindowController {
         if panel.frame != target { panel.setFrame(target, display: true) }
     }
 
+    /// Alerts appear on the display you're working on. An island already open stays put.
+    private func moveToActiveScreenForAlert() {
+        guard state.mode != .expanded, let active = IslandDisplay.activeScreen() else { return }
+        let activeID = IslandDisplay.displayID(of: active)
+        let homeID = IslandDisplay.displayID(of: IslandDisplay.screen(for: .saved))
+        IslandDisplay.alertScreenID = activeID == homeID ? nil : activeID
+        moveToChosenScreen()
+    }
+
+    /// Once the alert folds away, the island goes back to its saved display.
+    private func returnHomeAfterAlert() {
+        guard IslandDisplay.alertScreenID != nil else { return }
+        // Let the shrink animation (0.34 s) finish on the alert's display first.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
+            guard let self, self.state.mode != .expanded, IslandDisplay.alertScreenID != nil else { return }
+            IslandDisplay.alertScreenID = nil
+            self.moveToChosenScreen()
+        }
+    }
+
     // MARK: - Notch geometry (static)
 
     static func screenGeometry(for screen: NSScreen) -> IslandScreenGeometry {
@@ -905,6 +934,7 @@ extension Notification.Name {
     static let islandCollapse   = Notification.Name("notchBuddy.islandCollapse")
     static let openFullSettings = Notification.Name("notchBuddy.openFullSettings")
     static let hookReveal       = Notification.Name("notchBuddy.hookReveal")
+    static let hookAlert        = Notification.Name("notchBuddy.hookAlert")
     // Greeting ↔ IslandWindowController
     static let greetComplete    = Notification.Name("notchBuddy.greetComplete")
     static let greetingHover    = Notification.Name("notchBuddy.greetingHover")
